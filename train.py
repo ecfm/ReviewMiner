@@ -239,7 +239,7 @@ def main():
     parser.add_argument('--data_type', type=str, default='t1', choices=['t' + str(i) for i in range(9)], help="t: type")
     parser.add_argument('--model_type', type=str, default='cvae', choices=['cvae', 'ae_vae_fusion'])
     parser.add_argument('--iterations', type=int, default=101640 * 4)  # wp 850001  wi 300001 ax 300001 yp 800001
-    parser.add_argument('--dataset', type=str, default='wi', choices=['ax', 'yp', 'wp', 'wi'], help="Dataset to use for training")
+    parser.add_argument('--dataset', type=str, default='yp', choices=['ax', 'yp', 'wp', 'wi'], help="Dataset to use for training")
     parser.add_argument('--warmup', type=int, default=10000,
                         help="Amount of iterations to warmup, then decay. (-1 for no warmup and decay)")
 
@@ -376,18 +376,17 @@ def main():
     assert len(batch_schedule) <= 2, 'Currently not supporting multiple schedule'
     cur_b_schedule = len(batch_schedule) - 1 if args.switch_time == 0 else 0
     print('Batch schedule', batch_schedule)
-    train_loader, val_loader, test_loader = prepare_dataset(
+    train_loader = prepare_dataset(
         args.data_dir, args.dataset, tokenizer,
         batch_schedule[cur_b_schedule][0], batch_schedule[cur_b_schedule][1],
         batch_schedule[-1][0], batch_schedule[-1][1],
         batch_schedule[-1][0], batch_schedule[-1][1],
-        make_test=True,
         num_workers=args.workers, data_type=args.data_type
     )
     print('Done.')
 
     ###
-    val_loader = test_loader
+    # val_loader = test_loader
     ###
 
     print('Wrapping models and optimizers...')
