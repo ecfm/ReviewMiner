@@ -43,8 +43,7 @@ def compute_loss(device, model, uids, pids, input_tokens, target_tokens, mask, l
     target_tokens = target_tokens.to(device)
     mask = mask.to(device)
 
-    outputs = model(input_ids=input_tokens, attention_mask=mask, 
-                    uids=uids, pids=pids)
+    outputs = model(input_ids=input_tokens, attention_mask=mask, uids=uids, pids=pids)
     logits = outputs[0]
     num_logits = logits.size(-1)
 
@@ -127,39 +126,19 @@ def repeat_score(text, ngram=[3, 4, 5, 6]):
     return max(scores) if len(scores) >= 1 else 1.0
 
 
-def sample_sequence(model, tokenizer, length, batch_size=None, x_mask=None, x_tokens=None, y_mask=None, y_tokens=None,
+def sample_sequence(model, tokenizer, length, uids, pids, input_tokens, mask, batch_size=None,
                     temperature=1, top_k=100, top_p=0.95, device='cuda', sample=True, eos_token=None, model_type='cvae'):
-    x_mask = x_mask.to(device)
-    x_tokens = x_tokens.to(device)
-    y_mask = y_mask.to(device)
-    y_tokens = y_tokens.to(device)
 
     with torch.no_grad():
-        if model_type == 'cvae':
-            try:
-                prior_mean, prior_logvar = model.encoder_prior(input_ids=x_tokens, attention_mask=x_mask)[:2]
-            except:
-                prior_mean = prior_logvar = torch.zeros([batch_size, model.config.n_embd], device=device)
-            latent_mean, latent_logvar = prior_mean, prior_logvar
-            z = model.reparameterize(latent_mean, latent_logvar)
-            assert not torch.isnan(z).any(), 'training get nan z'
-        else:
-            posterior_mean, posterior_logvar = model.encoder(input_ids=x_tokens, attention_mask=x_mask)[:2]
-            latent_mean, latent_logvar = posterior_mean, posterior_logvar
-            z = latent_mean
-            assert not torch.isnan(z).any(), 'training get nan z'
-
-        _, mem = model.transformer(input_ids=x_tokens[:, :-1], past=None, attention_mask=x_mask[:, :-1], representations=z)
-        prev = x_tokens[:, -1].view(batch_size, -1)
+        _, _, mem = model(input_ids=input_tokens, attention_mask=mask, uids=uids, pids=pids)
+        prev = input_tokens
 
         output = prev
-        probability = torch.tensor([], dtype=z.dtype, device=device)
+        probability = torch.FloatTensor([], device=device)
         if_end = torch.tensor([False] * batch_size, dtype=torch.bool, device=device)
 
         for i in range(length): #trange
-            logits, mem = model.transformer(input_ids=prev, past=mem, representations=z)
-
-            logits = model.lm_head(logits)
+            logits, _, mem = model(input_ids=prev, past=mem, attention_mask=mask, uids=uids, pids=pids)
 
             logits = logits[:, -1, :] / temperature
             logits = top_k_top_p_filtering(logits, top_k, top_p)
@@ -194,7 +173,7 @@ def main():
     parser.add_argument('--warmup', type=int, default=10000,
                         help="Amount of iterations to warmup, then decay. (-1 for no warmup and decay)")
 
-    parser.add_argument('--batch-sizes', nargs='+', type=int, default=[1],
+    parser.add_argument('--batch-sizes', nargs='+', type=int, default=[16],
                         help='batch size per GPU. Lists the schedule.')
     parser.add_argument('--seq-lens', nargs='+', type=int, default=[1024],
                         help='seq length per sample. Lists the schedule.')
@@ -269,16 +248,17 @@ def main():
     config = GPT2Config()
 
     # add special tokens
-    # special_tokens_dict = {
-    #     'pad_token': '<|startoftext|>',
-    #     'cls_token': '<|startofcond|>',
-    #     'sep_token': '<|sepofcond|>',
-    #     'mask_token': '<|endofcond|>'
-    # }
-    # num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
-    # print('We have added', num_added_toks, 'special tokens')
-    # # Notice: resize_token_embeddings expect to receive the full size of the new vocab
-    # gpt2_model.resize_token_embeddings(len(tokenizer))
+    special_tokens_dict = {
+        'bos_token': '<|startoftext|>',
+        'pad_token': '<|endoftext|>',
+        'cls_token': '<|startofcond|>',
+        'sep_token': '<|sepofcond|>',
+        'mask_token': '<|endofcond|>'
+    }
+    num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+    print('We have added', num_added_toks, 'special tokens')
+    # Notice: resize_token_embeddings expect to receive the full size of the new vocab
+    gpt2_model.resize_token_embeddings(len(tokenizer))
     # assert tokenizer.pad_token == '<|startoftext|>'
     print('Setup data...')
     # Batch and sequence length schedule
@@ -341,7 +321,7 @@ def main():
 
     print('Begin training iterations')
     logging.info("Begin training iterations")
-    max_val_batches = 20000  # max num. of val batches
+    max_val_batches = 10  # max num. of val batches
     logging.info("Total iteration: %d" % args.iterations)
     e = 0  # number of epoch
     num_iters = 0
@@ -358,7 +338,7 @@ def main():
 
         logging.info("Validation loop.         Batches: %d" % len(val_loader))
         logging.info("Validation loop. max_val_batches: %d" % max_val_batches)
-
+        print('Begin validation iterations')
         # val_iter = iter(val_loader); x_mask, x_tokens, y_mask, y_tokens, input_tokens, target_tokens, mask = next(val_iter)
         with tqdm(total=min(len(val_loader), max_val_batches)) as pbar:
             for i, (uids, pids, input_tokens, target_tokens, mask) in enumerate(val_loader):
@@ -373,11 +353,6 @@ def main():
                 logprob = ce_loss.tolist()
                 assert len(text) == len(logprob)
 
-                # only for story
-                idx = text.index(endoftext)
-                text = text[idx + 1:]
-                logprob = logprob[idx + 1:]
-
                 if endoftext in text:
                     idx = text.index(endoftext)
                     text = text[:idx]
@@ -388,15 +363,10 @@ def main():
                 n_words_bpe += len(text)
 
                 story = [tokenizer.decode(target_tokens[i, :]) for i in range(n)]
-                story = [s[s.find("<|endoftext|>") + len("<|endoftext|>"):] for s in story]
-                story = [s[:s.find("<|endoftext|>") + len("<|endoftext|>")] if "<|endoftext|>" in s else s for s in
-                         story]
                 words = sum([len(
                     [t for t in re.split('("|\'|!|\?|\.|,|:| |\n|’|“|”|;|\(|\)|`)', s) if t != ' ' and t != '']) for
                     s in story])
                 n_words += words
-
-                kl_loss_sum += kl_loss.item()
 
                 if i > max_val_batches:
                     break
@@ -431,26 +401,20 @@ def main():
 
         # write samples to file
         samples_file = open(os.path.join(save_folder, 'generate-' + '%07d' % num_iters + '.txt'), 'w', encoding='utf8')
-
+        print('Begin generate iterations')
         # test_iter = iter(test_loader); x_mask, x_tokens, y_mask, y_tokens, input_tokens, target_tokens, mask = next(test_iter)
         with tqdm(total=len(test_loader)) as pbar:
-            for i_test, (x_mask, x_tokens, y_mask, y_tokens, input_tokens, target_tokens, mask) in enumerate(
+            for i_test, (uids, pids, input_tokens, target_tokens, mask) in enumerate(
                     test_loader):
 
                 if i_test >= 10: break
 
-                length = -1
-                if length == -1:
-                    length = model.config.n_ctx - x_tokens.size(1) - 1
-                elif length > model.config.n_ctx - x_tokens.size(1) - 1:
-                    raise ValueError("Can't get samples longer than window size: %s" % model.config.n_ctx)
 
                 eff_samples = []
                 n, l = target_tokens.size()
+                length = n
                 storys = [tokenizer.decode(target_tokens[i, :]) for i in range(n)]
-                storys = [s[s.find("<|endoftext|>") + len("<|endoftext|>"):] for s in storys]
-                storys_str = [s[:s.find("<|endoftext|>") + len("<|endoftext|>")] if "<|endoftext|>" in s else s for s in
-                              storys]
+                storys_str = [s[:s.find("<|endoftext|>")] for s in storys]
 
                 for _ in range(args.nsamples // args.batch_size):
                     # model, batch_size, temperature, top_k, top_p, eos_token, sample = VAE, args.batch_size, args.temperature, args.top_k, args.top_p, tokenizer.encoder['<|endoftext|>'], True
@@ -459,10 +423,10 @@ def main():
                         tokenizer=tokenizer,
                         length=length,
                         batch_size=args.batch_size,
-                        x_mask=x_mask,
-                        x_tokens=x_tokens,
-                        y_mask=y_mask,
-                        y_tokens=y_tokens,
+                        uids=uids,
+                        pids=pids,
+                        input_tokens=input_tokens, 
+                        mask=mask,
                         temperature=args.temperature,
                         top_k=args.top_k,
                         top_p=args.top_p,
@@ -475,7 +439,6 @@ def main():
                     # extract story, check metrics
                     for i in range(len(out)):
                         text = out[i]
-                        text = text[text.index(endoftext) + 1:]
 
                         if endoftext in text:
                             idx = text.index(endoftext)
@@ -519,8 +482,6 @@ def main():
                     samples_file.write('\n' * 2)
 
                     samples_file.write("=" * 40 + " Outlines  " + "=" * 40)
-                    samples_file.write('\n' * 2)
-                    samples_file.write(tokenizer.decode(x_tokens[i, :][x_mask[i, :] == 1].tolist()))
                     samples_file.write('\n' * 2)
                     samples_file.write("=" * 40 + " Story " + "=" * 40)
                     samples_file.write('\n' * 2)
@@ -597,7 +558,7 @@ def main():
                     beta = args.beta_0
                     logging.info('KL annealing restart')
 
-                if num_iters % 10000 == 0:
+                if num_iters % 10 == 0:
                     # test_plot(test_loader, num_iters)
                     val_step(val_loader)
                     generate(test_loader, num_iters)

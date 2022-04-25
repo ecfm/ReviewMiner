@@ -37,7 +37,7 @@ class Preprocessor(Preprocessor_base):
         self.data_type = data_type
 
     def make_fn(self):
-        return lambda input: self.tokenizer.encode(input)
+        return lambda input: self.tokenizer.encode(self.tokenizer.bos_token+" "+input+" "+self.tokenizer.eos_token)
 
 def read_csv(filename, chunksize=1000000):
   reader = pd.read_csv(filename, chunksize=chunksize)
