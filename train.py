@@ -295,7 +295,7 @@ def main():
         num_workers=args.workers, data_type=args.data_type
     )
 
-    model = Decoder(config, add_input=args.add_input, add_attn=args.add_attn, attn_proj_vary=args.attn_proj_vary)
+    model = Decoder(config)
     init_para_frompretrained(model, gpt2_model.transformer, share_para=True)
     model.lm_head.weight = gpt2_model.lm_head.weight
     print('model_params:', num_params(model))  # 286694400
@@ -312,14 +312,14 @@ def main():
     print('Done.')
 
     # fix pre-trained parameters before certain iterations
-    tuning_all_after_iters = 40000
-    tuning_all = False
-    for name, parameter in model.named_parameters():
-        # print((name, parameter.requires_grad))
-        new_pars = ['input_proj', 'attn_proj']
+    # tuning_all_after_iters = 40000
+    # tuning_all = False
+    # for name, parameter in model.named_parameters():
+    #     # print((name, parameter.requires_grad))
+    #     new_pars = ['input_proj', 'attn_proj']
 
-        if not any([True if n in name else False for n in new_pars]):
-           parameter.requires_grad = False
+    #     if not any([True if n in name else False for n in new_pars]):
+    #        parameter.requires_grad = False
 
     ###
     # val_loader = test_loader
@@ -566,11 +566,11 @@ def main():
                 # if num_iters % args.cycle >= args.cycle - args.beta_warmup:
                 #     beta = min(1.0, beta + (1. - args.beta_0) / args.beta_warmup)
 
-                if not tuning_all and num_iters >= tuning_all_after_iters:
-                    for name, parameter in model.named_parameters():
-                        # print((name, parameter.requires_grad))
-                        parameter.requires_grad = True
-                    tuning_all = True
+                # if not tuning_all and num_iters >= tuning_all_after_iters:
+                #     for name, parameter in model.named_parameters():
+                #         # print((name, parameter.requires_grad))
+                #         parameter.requires_grad = True
+                #     tuning_all = True
 
                 output = train_step(device, model, optimizer, uids, pids, input_tokens, target_tokens, mask, loss_fn)
                 loss, ce_loss = output[-1]

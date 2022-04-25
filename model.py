@@ -6,7 +6,7 @@ from cond_attn import Cond_Block
 from data.util import *
 
 class Decoder(GPT2Model):
-    def __init__(self, config, add_input=False, add_attn=False, attn_proj_vary=False):
+    def __init__(self, config, add_input=True, add_attn=False, attn_proj_vary=False):
         super(GPT2Model, self).__init__(config)
 
         # added code here
@@ -131,12 +131,14 @@ class Decoder(GPT2Model):
         u_embeds = self.uide(uids)
         # pids = pids.view(input_shape[-1])
         p_embeds = self.pide(pids)
-        representations = torch.cat((u_embeds, p_embeds), dim=1)
+        # representations = torch.cat((u_embeds, p_embeds), dim=1)
+        representations = u_embeds * p_embeds
         # add code here
         if self.add_input:
             assert (representations is not None)
-            input_proj = self.input_proj(representations).unsqueeze(1)
-            hidden_states = hidden_states + input_proj
+            # input_proj = self.input_proj(representations).unsqueeze(1)
+            # hidden_states = hidden_states + input_proj
+            hidden_states = hidden_states + representations
 
         hidden_states = self.drop(hidden_states)
 
