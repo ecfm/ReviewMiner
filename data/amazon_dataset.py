@@ -11,7 +11,7 @@ import data.util
 
 class AmazonDataset(torch.utils.data.Dataset):
   def __init__(self, filename, preprocess=lambda x: x, sort=False):
-    df = data.util.read_csv("/Users/STSadmin/Downloads/sample.csv")
+    df = data.util.read_csv("dataset/sample.csv")
     self.users = df['reviewerID']
     for u in self.users:
       if u not in data.util.uid_dict:
